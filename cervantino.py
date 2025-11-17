@@ -13,6 +13,7 @@ eval_interval = 300
 lerning_rate = 1e-2
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
+n_embd = 32
 #---------------------
 
 
@@ -78,14 +79,56 @@ def estimate_loss():
 
 # MODEL FEATURES
 
+class Head(nn.Module):
+  
+  def __init__(self,head_size):
+    super().__init__()
+
+    self.key = nn.Linear(n_embd, head_size, bias=False)
+    self.query = nn.Linear(n_embd, head_size, bias=False)
+    self.value = nn.Linear(n_embd, head_size,bias=False)
+    #ahora añadimos un buffer que se llama que es como una variable (matriz triangular)
+    #un buffer es algo de la arquitectura pero que no es un Parametro entrenable
+    self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+  def forward(self, x):
+    B,T,C = x.shape
+
+    q = self.query(x) #(B,T,head_size)
+    k = self.key(x) #(B,T,head_size)
+    v = self.value(x) #(B,T,head_size)
+
+    QK = q@k.transpose(-2,-1) * C**(-0.5)#(B,T,head_size) @ (B,head_size,T)
+    QK = QK.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+    QK = F.softmax(QK, dim=-1)
+
+    output = QK @ v  # (B, T, T) @ (B,T,head_size)
+
+    return output
+  
+
+
 class BigramModel(nn.Module):
   def __init__(self, vocab_size):
     super().__init__()
     # la matriz de pesos que el modelo simple aprenderá
-    self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+    self.token_embedding_table = nn.Embedding(vocab_size, n_embd) # ahora esto no nos da directamente los logits
+    self.pos_embedding_table = nn.Embedding(block_size,n_embd)
+    self.sa_head = Head(n_embd)
+    self.lm_head = nn.Linear(n_embd,vocab_size)
 
   def forward(self, idx, targets=None):
-      logits = self.token_embedding_table(idx)
+      
+      B,T = idx.shape
+      
+      tok_emb = self.token_embedding_table(idx) # (B,T,numb_embd)
+      pos_emb = self.pos_embedding_table(torch.arange(T,device=device)) # (T, numb_embd) Las posiciones son iguales para todos los Batches
+                                        # torch.arrenge(T), generates a tensor with de positions [0,1,...,T]
+      
+      x = tok_emb + pos_emb
+      x = self.sa_head(x) # Pasamos el token por un bloque de atención
+
+      logits = self.lm_head(x) # (B,T,vocab_size)
 
       if targets is None:
         loss = None
@@ -100,8 +143,10 @@ class BigramModel(nn.Module):
   def generate(self, idx, max_new_tokens):
         # 
         for _ in range(max_new_tokens):
+            # adjust lenght of the idx to match max_size of block_size
+            idx_cond = idx[:,-block_size:]
             # get the predictions
-            logits, loss = self(idx)
+            logits, loss = self(idx_cond)
             #reducimos y solo cogemos ultima isntancia temporal (modelo Bigramo)
             logits = logits[:,-1,:] # (B,C)
             # convertimos los valores a probabilidades con una softmax
