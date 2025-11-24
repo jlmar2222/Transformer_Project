@@ -15,7 +15,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
 n_embd = 32
 heads_num = 4
-head_size = n_embd // heads_num
+head_size = n_embd // heads_num # esto debe de ser asi, para que no haya dimension missmatch
 dropout = 0.2
 n_layers = 6 
 #---------------------
@@ -109,7 +109,7 @@ class Head(nn.Module):
     QK = F.softmax(QK, dim=-1)
     QK = self.drop(QK)
 
-    output = QK @ v  # (B, T, T) @ (B,T,head_size)
+    output = QK @ v  # (B, T, T) @ (B,T,head_size) = (B,T,head_size)
 
     return output
   
