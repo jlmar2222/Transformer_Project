@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.egg-info/
+*.egg
+
+# Entornos virtuales
+venv/
+.venv/
+ENV/
+env/
+
+# PyTorch / checkpoints
+*.pt
+*.pth
+*.ckpt
+
+# Datos grandes
+data/
+VehiclesDataset/
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
