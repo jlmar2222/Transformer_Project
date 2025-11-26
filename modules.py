@@ -30,12 +30,14 @@ class PatchEmbedding(nn.Module):
 
 
 class FNN(nn.Module):
-   def __init__(self, embd_dim):
+   def __init__(self, embd_dim,dropout):
        super().__init__()
        self.net = nn.Sequential(
            nn.Linear(embd_dim, 4*embd_dim),
            nn.GELU(),
-           nn.Linear(4*embd_dim,embd_dim)
+           nn.Dropout(dropout),
+           nn.Linear(4*embd_dim,embd_dim),
+           nn.Dropout(dropout)
            )
     
    def forward(self,x):
@@ -43,11 +45,13 @@ class FNN(nn.Module):
        return x # (B,T,C)
 
 class Head(nn.Module):
-    def __init__(self,embd_dim,head_size):
+    def __init__(self,embd_dim,head_size,dropout):
         super().__init__()
         self.query = nn.Linear(embd_dim, head_size, bias=False)
         self.key = nn.Linear(embd_dim, head_size, bias=False)
         self.value = nn.Linear(embd_dim, head_size, bias=False)
+
+        self.drop = nn.Dropout(dropout)
             
     def forward(self,x):
 
@@ -62,8 +66,10 @@ class Head(nn.Module):
         scale = k.size(-1) # scale = head_size / keys_dimention
         scaled_QK = QK * scale**(-0.5) # (B,T,T) --> # para prevenir vanishing gradient
         s_QK = F.softmax(scaled_QK, dim=-1)
+        s_QK = self.drop(s_QK)
         
         output = s_QK @ v  # (B, T, T) @ (B,T,head_size) = (B,T,head_size)
+        output = self.drop(output)
 
         return output # (B,T,head_size)
         
@@ -71,14 +77,16 @@ class Head(nn.Module):
 
 class MultiheadAttention(nn.Module):
 
-    def __init__(self,embd_dim,n_heads):
+    def __init__(self,embd_dim,n_heads,dropout):
 
         super().__init__()
         # echa head => (B,T,head_size)
-        self.heads = nn.ModuleList([Head(embd_dim,embd_dim//n_heads) for _ in range(n_heads)]) 
+        self.heads = nn.ModuleList([Head(embd_dim,embd_dim//n_heads,dropout) for _ in range(n_heads)]) 
         # estamos formando una lsita con n_heads heads:
         # [(B,T,head_size),(B,T,head_size),...,(B,T,head_size)]
         self.projection = nn.Linear(embd_dim,embd_dim)
+
+        self.drop = nn.Dropout(dropout)
 
     def forward(self,x):
         # torch.cat agrupara todos los elementos de la lsita de Heads (nn.Modulelist)
@@ -87,16 +95,17 @@ class MultiheadAttention(nn.Module):
         # nuestra tercera/última dimension será ahora head_size*n_heads => por construcción/conveniencia => embd_dim:= C
         out = torch.cat([head(x) for head in self.heads], dim=-1) # (B, T, C)
         out = self.projection(out)
+        out = self.drop(out)
 
         return out # (B,T,C)
      
     
 
 class Block(nn.Module):
-    def __init__(self,embd_dim,n_heads):
+    def __init__(self,embd_dim,n_heads,dropout):
         super().__init__()
-        self.mh_attention = MultiheadAttention(embd_dim,n_heads)
-        self.fnn = FNN(embd_dim) 
+        self.mh_attention = MultiheadAttention(embd_dim,n_heads,dropout)
+        self.fnn = FNN(embd_dim, dropout) 
         self.ln1 = nn.LayerNorm(embd_dim) # especie de BatchNorm pero sobre el block_size, es decir sobre la
         self.ln2 = nn.LayerNorm(embd_dim) # es decri, sobre la dimensión de los tokens (la imagen en este caso)
     
@@ -112,13 +121,15 @@ class Block(nn.Module):
 # ------ BUILDING FINAL ViT
 
 class Vit(nn.Module):
-    def __init__(self,in_channel,embd_dim,patch_size,seq_len,n_heads, n_layers,n_classes):
+    def __init__(self,in_channel,embd_dim,patch_size,seq_len,n_heads, n_layers,n_classes,dropout):
         super().__init__()
         self.patch_embd = PatchEmbedding(in_channel,embd_dim,patch_size) # (B,T,C) 
         self.poss_embd = nn.Parameter(torch.zeros(1, seq_len + 1, embd_dim)) # (1,T+1,C); +1 por el CLS token  
-        self.blocks = nn.Sequential(*[Block(embd_dim,n_heads) for _ in range(n_layers)]) # --> la Red recorre: (Block())*n_layer veces
+        self.blocks = nn.Sequential(*[Block(embd_dim,n_heads,dropout) for _ in range(n_layers)]) # --> la Red recorre: (Block())*n_layer veces
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embd_dim)) # (1,1,C), special token (El Clasificador) 
         self.mlp = nn.Linear(embd_dim,n_classes) # (B,1,Labels)
+
+        self.drop = nn.Dropout(dropout)
 
     def forward(self,x):
 
@@ -128,6 +139,7 @@ class Vit(nn.Module):
         # Add CLS token
         x = torch.cat([self.cls_token.expand(B, -1, -1), x], dim=1) # incoorporamos CLS al tensor
         x = x + self.poss_embd # añadimos positional embeding ((B,T,C) + B*(1,T,C) # torch replicara el pos_embd B times. C = embd_dim
+        x = self.drop(x)
         x = self.blocks(x) # cadena de atención
         # IMP: lo que llega al MLP clasificador final no es la sequencia entera
         # es solamente el token CLS que añadimos artificialmente y que 'insorpora'
@@ -140,6 +152,7 @@ class Vit(nn.Module):
 
 
 
+"""
 
 #--MINI PRUEBA DE FUNCIONAMIENTO:
 
@@ -206,3 +219,5 @@ for epoch in range(10):
             print(f"Batch {i} | Loss = {loss.item():.4f} | Logits shape = {logits.shape}")
 
 print("✔ Test completado. El modelo forward/backward funciona correctamente.")
+
+"""
